@@ -9,16 +9,64 @@ for _, v in pg:GetChildren() do
     if v:IsA("ScreenGui") and (v.Name == "UltimateOP" or v.Name == "ESP_Overlay") then v:Destroy() end
 end
 
+if _G.orbitConns then for _, c in pairs(_G.orbitConns) do c:Disconnect() end; _G.orbitConns = nil end
+
+-- Adonis AC Bypass
+do
+    local AdonisTables = {}
+    local function bypassAC()
+        if not getreg or not getgc then return end
+        for _, thread in getreg() do
+            if typeof(thread) == "thread" then
+                local Source = debug.info(thread, 1, "s")
+                if Source and (Source:match(".Core.Anti") or Source:match(".Plugins.Anti_Cheat")) then
+                    pcall(coroutine.close, thread)
+                end
+            end
+        end
+        local Found
+        if filtergc then
+            Found = filtergc("table", { Keys = { "Detected", "RLocked" } }, false)
+        else
+            Found = {}
+            for _, t in getgc(true) do
+                if typeof(t) == "table" and typeof(rawget(t, "Detected")) == "function" and rawget(t, "RLocked") then
+                    table.insert(Found, t)
+                end
+            end
+        end
+        for _, t in Found do
+            if typeof(rawget(t, "Detected")) ~= "function" then continue end
+            for _, fn in t do
+                if typeof(fn) == "function" and not isfunctionhooked(fn) then
+                    hookfunction(fn, function() coroutine.yield(); return task.wait(9e9) end)
+                end
+            end
+        end
+    end
+    local ok, err = pcall(bypassAC)
+    if ok then print("AC Bypass: Active") else warn("AC Bypass: " .. tostring(err)) end
+end
+
 local cfg = {
     hitbox = { en = true, sz = 20, op = 0.35 },
     noclip = { en = false }, speed = { en = false, v = 64 }, jump = { en = false, v = 80 },
     loopsy = { en = false }, antiKB = { en = false }, abypass = { en = false },
     spamSkill = { en = false, idx = 1 }, autoM1 = { en = false, range = 25 }, kb = { en = false },
     esp = { en = true },
+    orbit = { en = false, dist = 6, spd = 5 },
+    autoJoin = { en = false },
 }
 local orig = {}; local espObjs = {}; local cu = nil; local combatMod = nil; local abilityMod = nil
+local orbitTarget = nil; local orbitAngle = 0
 local rs = game:GetService("ReplicatedStorage")
 local F = rs:FindFirstChild("Files")
+local function getDeployEvent()
+    local ok, ev = pcall(function()
+        return rs.Files.Shared.Components.Jolt.Utils.Remotes.Jolt_Reliable
+    end)
+    return ok and ev or nil
+end
 
 local function gcu()
     if cu then return cu end
@@ -39,10 +87,7 @@ local function ga()
 end
 
 -- ESP
--- ESP overlay (attach to each character directly, no folder needed)
-
 local function createESP(p)
-    -- Clean old ESP from previous executions
     if p.Character then
         local oldHl = p.Character:FindFirstChild("Highlight")
         if oldHl then oldHl:Destroy() end
@@ -55,12 +100,10 @@ local function createESP(p)
         local hrp = c:WaitForChild("HumanoidRootPart", 5)
         local hum = c:WaitForChild("Humanoid", 5)
         if not hrp or not hum then return end
-        -- Red outline highlight
         local hl = Instance.new("Highlight")
         hl.Adornee = c; hl.FillColor = Color3.fromRGB(200,20,20); hl.FillTransparency = 0.6
         hl.OutlineColor = Color3.fromRGB(255,30,30); hl.OutlineTransparency = 0.1
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = c
-        -- Big HP number only (no background, no bar)
         local bb = Instance.new("BillboardGui")
         bb.Adornee = hrp; bb.Size = UDim2.new(0,80,0,50); bb.StudsOffset = Vector3.new(0,4.5,0)
         bb.AlwaysOnTop = true; bb.Parent = c
@@ -144,7 +187,7 @@ local function sh()
     end
 end
 
--- Anti-KB (only cancels knockback spikes, ignores normal movement)
+-- Anti-KB
 local prevVel = Vector3.new()
 local function ak()
     if not cfg.antiKB.en or not lp.Character then return end
@@ -190,11 +233,68 @@ local function am1(dt)
     end
 end
 
+-- Auto Orbit (orbit until 1 HP, then switch)
+local orbitAttackT = 0
+local function ao(dt)
+    if not cfg.orbit.en or not lp.Character then
+        if orbitTarget then orbitTarget = nil; orbitAngle = 0 end
+        return
+    end
+    local hrp = lp.Character:FindFirstChild("HumanoidRootPart")
+    local hum = lp.Character:FindFirstChild("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then orbitTarget = nil; return end
+    if orbitTarget and orbitTarget.Character then
+        local thrp = orbitTarget.Character:FindFirstChild("HumanoidRootPart")
+        local thum = orbitTarget.Character:FindFirstChild("Humanoid")
+        if not thrp or not thum or thum.Health <= 1 then orbitTarget = nil end
+    end
+    if not orbitTarget then
+        local best, bestHp = nil, math.huge
+        for _, p in Players:GetPlayers() do
+            if p ~= lp and p.Character then
+                local thrp = p.Character:FindFirstChild("HumanoidRootPart")
+                local thum = p.Character:FindFirstChild("Humanoid")
+                if thrp and thum and thum.Health > 0 and thum.Health < bestHp then
+                    best, bestHp = p, thum.Health
+                end
+            end
+        end
+        orbitTarget = best; orbitAngle = 0
+    end
+    if not orbitTarget or not orbitTarget.Character then return end
+    local thrp = orbitTarget.Character:FindFirstChild("HumanoidRootPart")
+    if not thrp then orbitTarget = nil; return end
+    orbitAngle = (orbitAngle + dt * cfg.orbit.spd * 60) % 360
+    hrp.CFrame = CFrame.new(thrp.Position) * CFrame.Angles(0, math.rad(orbitAngle), 0) * CFrame.new(cfg.orbit.dist, 0, 0)
+    hrp.CFrame = CFrame.new(hrp.Position, thrp.Position)
+    -- Attack while orbiting
+    orbitAttackT = orbitAttackT + dt
+    if orbitAttackT >= 0.15 then
+        orbitAttackT = 0
+        local cm = gc()
+        if cm then pcall(function() cm.UseM1(cm) end) end
+    end
+end
+
+-- Auto Join Match
+local ajt = 0
+local function aj(dt)
+    if not cfg.autoJoin.en then return end
+    if lp.Character then return end
+    ajt = ajt + dt; if ajt < 1 then return end; ajt = 0
+    local ev = getDeployEvent()
+    if ev then
+        pcall(function()
+            ev:FireServer(buffer.fromstring("\x06Deploy\x81\x11\x00"), {})
+        end)
+    end
+end
+
 -- Frame hooks
 RunService.Heartbeat:Connect(function() sh(); updateESP() end)
 RunService.Stepped:Connect(function() sh(); ls(); bc() end)
 RunService.RenderStepped:Connect(function(dt)
-    sh(); sj(); ls(); am1(dt); ak(); bc(); ss(dt)
+    sh(); sj(); ls(); am1(dt); ak(); bc(); ss(dt); ao(dt); aj(dt)
     if cfg.noclip.en and lp.Character then for _, v in lp.Character:GetDescendants() do if v:IsA("BasePart") then v.CanCollide = false end end end
     if lp.Character then local hb = lp.Character:FindFirstChild("Hitbox"); if hb and hb:IsA("BasePart") and hb.Size.X > 5 then hb.Size = Vector3.new(4,6,2); hb.Transparency = 1; hb.Material = Enum.Material.Plastic end end
 end)
@@ -203,7 +303,7 @@ end)
 local sg = Instance.new("ScreenGui")
 sg.Name = "UltimateOP"; sg.ResetOnSpawn = false; sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; sg.Parent = pg
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0,240,0,520); f.Position = UDim2.new(0,25,0,80)
+f.Size = UDim2.new(0,240,0,580); f.Position = UDim2.new(0,25,0,80)
 f.BackgroundColor3 = Color3.fromRGB(12,12,12); f.BackgroundTransparency = 0.15; f.BorderSizePixel = 0; f.Active = true; f.Parent = sg
 local fic = Instance.new("UICorner"); fic.CornerRadius = UDim.new(0,10); fic.Parent = f
 local tb = Instance.new("Frame")
@@ -230,6 +330,8 @@ local td = {
     {k="spamSkill", l="Spam Skills", c=Color3.fromRGB(200,50,200)},
     {k="autoM1", l="Auto M1 Attack", c=Color3.fromRGB(200,70,200)},
     {k="kb", l="Remove KillBricks", c=Color3.fromRGB(255,140,70)},
+    {k="orbit", l="Auto Orbit", c=Color3.fromRGB(255,100,50)},
+    {k="autoJoin", l="Auto Join Match", c=Color3.fromRGB(50,200,255)},
 }
 local y = 42; local refs = {}
 for _, t in ipairs(td) do
@@ -251,6 +353,7 @@ for _, t in ipairs(td) do
         if k == "noclip" and lp.Character then for _, v in lp.Character:GetDescendants() do if v:IsA("BasePart") then v.CanCollide = not on2 end end end
         if k == "kb" then local ff = workspace:FindFirstChild("KillBricks"); if ff then for _, v in ff:GetChildren() do if v:IsA("BasePart") then v.Anchored = false; v.CanCollide = false; v.Transparency = 1 end end end end
         if not on2 and k == "hitbox" then for p, s in next, orig do if p.Character then local h = p.Character:FindFirstChild("Hitbox"); if h then h.Size = s; h.Transparency = 1; h.Material = Enum.Material.Plastic; h.Color = Color3.fromRGB(163,162,165) end end end; orig = {} end
+        if not on2 and k == "orbit" then orbitTarget = nil; orbitAngle = 0 end
     end)
     y = y + 32; refs[t.k] = bn
 end
@@ -276,3 +379,10 @@ hbB.MouseButton1Click:Connect(function() hidden = not hidden; f.Visible = not hi
 
 for _, p in Players:GetPlayers() do if p.Character and p ~= lp then local h = p.Character:FindFirstChild("Hitbox"); if h then orig[p] = h.Size end end end
 lp.CharacterAdded:Connect(function() task.wait(0.5); if cfg.noclip.en and lp.Character then for _, v in lp.Character:GetDescendants() do if v:IsA("BasePart") then v.CanCollide = false end end end end)
+lp.CharacterRemoving:Connect(function()
+    if cfg.autoJoin.en then
+        task.wait(0.5)
+        local ev = getDeployEvent()
+        if ev then pcall(function() ev:FireServer(buffer.fromstring("\x06Deploy\x81\x11\x00"), {}) end) end
+    end
+end)
