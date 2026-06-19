@@ -41,7 +41,7 @@ local IF=function(c)
 end
 
 -- Map bounds check (only target players inside Workspace.Map)
-local mapMin,mapMax=nil,nil
+local mm,MM=nil,nil
 local function calcMapBounds()
     local map=workspace:FindFirstChild("Map")
     if not map then return end
@@ -49,37 +49,38 @@ local function calcMapBounds()
     for _,v in map:GetDescendants()do
         if v:IsA("BasePart")then
             local cf=v.CFrame;local sz=v.Size/2
-            local corners={cf*CFrame.new(-sz.X,-sz.Y,-sz.Z),cf*CFrame.new(sz.X,-sz.Y,-sz.Z),cf*CFrame.new(-sz.X,sz.Y,-sz.Z),cf*CFrame.new(sz.X,sz.Y,-sz.Z),cf*CFrame.new(-sz.X,-sz.Y,sz.Z),cf*CFrame.new(sz.X,-sz.Y,sz.Z),cf*CFrame.new(-sz.X,sz.Y,sz.Z),cf*CFrame.new(sz.X,sz.Y,sz.Z)}
-            for _,c in corners do local p=c.Position;if not mn then mn,mx=p,p else mn=Vector3.new(math.min(mn.X,p.X),math.min(mn.Y,p.Y),math.min(mn.Z,p.Z));mx=Vector3.new(math.max(mx.X,p.X),math.max(mx.Y,p.Y),math.max(mx.Z,p.Z))end end
+            local p8={cf*CFrame.new(-sz.X,-sz.Y,-sz.Z),cf*CFrame.new(sz.X,-sz.Y,-sz.Z),cf*CFrame.new(-sz.X,sz.Y,-sz.Z),cf*CFrame.new(sz.X,sz.Y,-sz.Z),cf*CFrame.new(-sz.X,-sz.Y,sz.Z),cf*CFrame.new(sz.X,-sz.Y,sz.Z),cf*CFrame.new(-sz.X,sz.Y,sz.Z),cf*CFrame.new(sz.X,sz.Y,sz.Z)}
+            for _,c in p8 do local p=c.Position;if not mn then mn,mx=p,p else mn=Vector3.new(math.min(mn.X,p.X),math.min(mn.Y,p.Y),math.min(mn.Z,p.Z));mx=Vector3.new(math.max(mx.X,p.X),math.max(mx.Y,p.Y),math.max(mx.Z,p.Z))end end
         end
     end
-    mapMin=mn;mapMax=mx
+    mm=mn;MM=mx
 end
-calcMapBounds()
+-- Retry bounds until Map loads
+task.spawn(function()
+    while not mm do task.wait(1)calcMapBounds()end
+end)
 
--- Check if position is inside map bounds (fast, no function call)
-local mm,MM=mapMin,mapMax
+-- Fast target finder - only returns players inside map bounds
 local cl=function()
-    local b,bd=nil,math.huge
     if not plr.Character then return nil end
     local mp=plr.Character:FindFirstChild("HumanoidRootPart")
     if not mp then return nil end
-    mp=mp.Position
+    mp=mp.Position;local b,bd=nil,math.huge
+    if not mm or not MM then return nil end
     for _,p in game.Players:GetPlayers()do
         if p~=plr and p.Character then
             local r=p.Character:FindFirstChild("HumanoidRootPart")
             local h=p.Character:FindFirstChild("Humanoid")
             if r and h and h.Health>0 then
                 local pos=r.Position
-                -- Fast map bounds check inline (no function call)
-                if mm and MM and pos.X>=mm.X and pos.X<=MM.X and pos.Y>=mm.Y and pos.Y<=MM.Y and pos.Z>=mm.Z and pos.Z<=MM.Z then
+                if pos.X>=mm.X and pos.X<=MM.X and pos.Y>=mm.Y and pos.Y<=MM.Y and pos.Z>=mm.Z and pos.Z<=MM.Z then
                     local d=(mp-pos).Magnitude
                     if d<bd then b,bd=p,d end
                 end
             end
         end
     end
-    return b,bd
+    return b
 end
 
 -- Config
@@ -218,7 +219,8 @@ local ao=function(dt)
     local kf=workspace:FindFirstChild("KillBricks")
     if kf then for _,v in kf:GetChildren()do if v:IsA("BasePart")then v.Anchored=false;v.CanCollide=false;v.Transparency=1 end end end
 
-    -- Validate current target (must be in map bounds)
+    -- Validate current target every frame + force re-target every 3s
+    at=at+dt
     if ot and ot.Character then
         local tr=ot.Character:FindFirstChild("HumanoidRootPart");local th=ot.Character:FindFirstChild("Humanoid")
         if not tr or not th or th.Health<=1 then ot=nil
@@ -227,8 +229,12 @@ local ao=function(dt)
         end
     end
 
-    -- Find closest target
-    if not ot then local c,d=cl();if c then ot=c;oa=0 end end
+    -- Auto re-target if no target or every 3 seconds
+    if not ot or at>=3 then
+        local c=cl()
+        if c then ot=c;oa=0 end
+        if at>=3 then at=0 end
+    end
     if not ot or not ot.Character then return end
 
     local tr=ot.Character:FindFirstChild("HumanoidRootPart")
@@ -237,14 +243,12 @@ local ao=function(dt)
     local d=(r.Position-tr.Position).Magnitude
 
     if d>25 then
-        -- TWEEN approach at 200 studs/second
         if tw then tw:Cancel()tw=nil end
         tw=TS:Create(r,TweenInfo.new(d/200,Enum.EasingStyle.Linear,Enum.EasingDirection.Out),{
             CFrame=CFrame.lookAt(tr.Position+Vector3.new(0,0,6),tr.Position)
         })
         tw:Play()
     else
-        -- ORBIT
         if tw then tw:Cancel()tw=nil end
         oa=(oa+dt*5*60)%360
         r.CFrame=r.CFrame:Lerp(CFrame.new(
@@ -256,7 +260,7 @@ local ao=function(dt)
 
     -- Always face target and attack
     r.CFrame=CFrame.lookAt(r.Position,Vector3.new(tr.Position.X,r.Position.Y,tr.Position.Z))
-    at=at+dt;if at>=0.12 then at=0;local c=gc();if c then pcall(function()c.UseM1(c)end)end end
+    if at%0.12<dt then local c=gc();if c then pcall(function()c.UseM1(c)end)end end
 end
 
 -- Auto join match
