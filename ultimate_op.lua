@@ -1,5 +1,50 @@
---[[ ABILITY ARENA ULTIMATE OP v6.5 ]]
--- Health lock, IFrame bypass, Tween orbit, Lobby filter, ESP, hitbox, anti-KB, cooldown bypass, auto M1, skill spam, killbrick removal, auto join
+--[[
+    ABILITY ARENA - ULTIMATE OP v6.5
+    =================================
+    
+    🔥 FEATURES:
+    • Auto Orbit (Advanced Tween) - 200 studs/s approach, smooth orbital rotation
+    • Hitbox Expander [X] - 20x20x20 hitbox with ForceField glow
+    • ESP Wallhack - See enemies through walls with HP display
+    • NoClip [C] - Walk through everything
+    • Speed / Jump Boost - Movement domination
+    • Anti Knockback - Never get knocked around
+    • Cooldown Bypass - Spam abilities non-stop
+    • Auto M1 Attack - Automatic melee combat
+    • Spam Skills - Auto-cycle through all abilities
+    • Remove KillBricks - Disable map hazards
+    • Auto Join Match - Auto-deploy on respawn
+    • Server Hop Button - Instant server switch
+    • 🔴 ADMIN DETECTOR - Auto server hop when admin joins
+    
+    🛡️ BYPASSES:
+    • Health Lock - Set health to 100 every frame
+    • IFrame Status Effect - Native game invulnerability
+    • BreakJointsOnDeath = false - Prevent character destruction
+    • Force Free State - Prevent ragdoll/death state
+    • Adonis AC Bypass - Disable anti-cheat detection
+    • KillBrick Removal - Disable map kill parts
+    
+    🎯 TARGETING:
+    • Map Bounds Filter - Only targets players inside Workspace.Map
+    • Closest Enemy Priority - Always attacks nearest threat
+    • 200 studs/s Smooth Approach Tween
+    • Orbital Combat at close range
+    
+    🛡️ ADMIN DETECTION:
+    • Memory Scans admin tables for Rank/Permission
+    • Hooks all remotes for admin command patterns
+    • Monitors chat for ban/kick/mute events
+    • Scans player names and group membership
+    • Auto server hops with warning message
+    
+    ⌨️ HOTKEYS:
+    X - Toggle Hitbox Expander
+    C - Toggle NoClip
+    
+    =================================
+    Created for Ability Arena 💥
+]]
 
 local plr=game:GetService("Players").LocalPlayer
 local RS=game:GetService("RunService")
@@ -8,6 +53,181 @@ local F=game:GetService("ReplicatedStorage"):FindFirstChild("Files")
 local pg=plr.PlayerGui
 
 for _,v in pg:GetChildren()do if v:IsA("ScreenGui")and v.Name=="UltimateOP"then v:Destroy()end end
+
+-- Auto re-execute on teleport
+local autoExecCode="loadstring(game:HttpGet('https://raw.githubusercontent.com/UnAliveScripts/abbilityarenaOP/refs/heads/main/ultimate_op.luau'))()"
+if syn and syn.queue_on_teleport then syn.queue_on_teleport(autoExecCode)
+elseif queue_on_teleport then queue_on_teleport(autoExecCode) end
+
+-- ADMIN DETECTOR - comprehensive scan
+local admins={}
+local function serverHop()
+    -- Show kick-like message
+    local plr=game:GetService("Players").LocalPlayer
+    if plr then
+        local gui=Instance.new("ScreenGui")
+        gui.Name="AdminHopMsg";gui.ResetOnSpawn=false;gui.Parent=plr:FindFirstChild("PlayerGui") or plr.PlayerGui
+        local frame=Instance.new("Frame")
+        frame.Size=UDim2.new(1,0,1,0);frame.BackgroundColor3=Color3.fromRGB(0,0,0);frame.BackgroundTransparency=0.3;frame.Parent=gui
+        local msg=Instance.new("TextLabel")
+        msg.Size=UDim2.new(1,0,0,100);msg.Position=UDim2.new(0,0,0.5,-50);msg.BackgroundTransparency=1
+        msg.Text="ADMIN DETECTED\nServerhopping...";msg.TextColor3=Color3.fromRGB(255,0,0);msg.TextSize=40
+        msg.Font=Enum.Font.GothamBold;msg.TextScaled=true;msg.TextWrapped=true;msg.Parent=frame
+        task.wait(1.5)
+        gui:Destroy()
+    end
+
+    -- Server hop
+    local TS=game:GetService("TeleportService");local HS=game:GetService("HttpService");local plrs=game:GetService("Players")
+    local lp=plrs.LocalPlayer;local pid=game.PlaceId;local jid=game.JobId
+    local function hop()
+        local url="https://games.roblox.com/v1/games/"..pid.."/servers/Public?sortOrder=Asc&limit=100"
+        local cursor=nil;local servers={}
+        repeat
+            local u=url;if cursor then u=u.."&cursor="..cursor end
+            local s,r=pcall(game.HttpGet,game,u)
+            if not s then break end
+            local o,e=pcall(HS.JSONDecode,HS,r)
+            if not o then break end
+            for _,sv in pairs(e.data) do
+                if sv.id~=jid and sv.playing<sv.maxPlayers and sv.ping and sv.ping>0 then
+                    table.insert(servers,sv)
+                end
+            end
+            cursor=e.nextPageCursor
+            if #servers>=10 then break end
+        until not cursor
+        if #servers==0 then warn("No servers");return end
+        local target=servers[math.random(1,#servers)]
+        for i=1,3 do
+            local s,e=pcall(TS.TeleportToPlaceInstance,TS,pid,target.id,lp)
+            if s then return end
+            task.wait(1)
+        end
+    end
+    pcall(hop)
+end
+
+local adminDetected=false
+local function logAdmin(name,reason)
+    if not admins[name] then
+        admins[name]=true
+        warn("[ADMIN] "..name..": "..reason)
+        if not adminDetected then
+            adminDetected=true
+            task.spawn(serverHop)
+        end
+    end
+end
+
+-- Method 1: Scan ALL remotes for admin patterns + hook them
+local function hookAllAdminRemotes()
+    local rs=game:GetService("ReplicatedStorage")
+    local adminPatterns={"admin","ban","kick","punish","mod","staff","command","permission","rank","cmds","promote","demote","mute","unmute","warn","teleport","goto","bring","freeze","unfreeze","remoteevent"}
+    for _,v in rs:GetDescendants() do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+            local n=v.Name:lower()
+            for _,pat in ipairs(adminPatterns) do
+                if n:find(pat) then
+                    print("[ADMIN REMOTE] "..v:GetFullName())
+                    break
+                end
+            end
+            -- Hook ALL remotes to detect admin call patterns
+            local oldFire=v.FireServer
+            if oldFire and not v._hooked then
+                v._hooked=true
+                v.FireServer=function(self,...)
+                    local args={...}
+                    local trace=debug and debug.traceback and debug.traceback() or ""
+                    -- Check if this looks like an admin command
+                    if #args>0 then
+                        local first=tostring(args[1])
+                        if first:lower():find("admin") or first:lower():find("ban") or first:lower():find("kick") then
+                            print("[ADMIN CALL] "..v.Name.." args: "..first)
+                        end
+                    end
+                    return oldFire(self,...)
+                end
+            end
+        end
+    end
+end
+pcall(hookAllAdminRemotes)
+
+-- Method 2: Memory scan for Adonis admin data + hook admin check
+for _,t in pairs(getgc(true)) do
+    if typeof(t)=="table" then
+        -- Find admin data tables (player names as keys with Rank/Permission)
+        for k,v in pairs(t) do
+            if type(k)=="string" and typeof(v)=="table" then
+                local rank=pcall(rawget,v,"Rank") and rawget(v,"Rank")
+                local perm=pcall(rawget,v,"Permission") and rawget(v,"Permission")
+                local isDev=pcall(rawget,v,"IsDev") and rawget(v,"IsDev")
+                if rank or perm or isDev then
+                    logAdmin(k,"admin data (rank: "..tostring(rank or perm or isDev)..")")
+                end
+            end
+        end
+        -- Also check table directly for admin patterns
+        local un=pcall(rawget,t,"Users") and rawget(t,"Users")
+        if un and typeof(un)=="table" then
+            for k2,v2 in pairs(un) do
+                if type(k2)=="string" and typeof(v2)=="table" then
+                    local r=pcall(rawget,v2,"Rank") and rawget(v2,"Rank")
+                    if r then logAdmin(k2,"admin data from Users (rank: "..tostring(r)..")") end
+                end
+            end
+        end
+    end
+end
+
+-- Method 3: Check all player names + group membership
+local function checkPlayer(p)
+    local n=p.Name:lower()
+    if n:find("admin") or n:find("mod") or n:find("staff") or n:find("owner") or n:find("dev") then
+        logAdmin(p.Name,"name pattern")
+    end
+    -- Check group
+    local s,r=pcall(function()return p:IsInGroup(179853653)end)
+    if s and r then logAdmin(p.Name,"in game group") end
+end
+for _,p in game:GetService("Players"):GetPlayers() do checkPlayer(p) end
+game:GetService("Players").PlayerAdded:Connect(function(p)
+    task.wait(5);checkPlayer(p)
+    -- Check new player's backpack for admin tools after they spawn
+    task.spawn(function()
+        while p.Character do
+            task.wait(2)
+            for _,v in (p.Character:GetDescendants()) do
+                local nn=v.Name:lower()
+                if (v:IsA("Tool") or v:IsA("HopperBin")) and (nn:find("admin") or nn:find("ban") or nn:find("kick") or nn:find("mod")) then
+                    logAdmin(p.Name,"admin tool: "..v.Name)
+                end
+            end
+        end
+    end)
+end)
+
+-- Method 4: Watch chat for admin actions
+local function watchChat()
+    local chat=pg:FindFirstChild("Chat") or game:GetService("CoreGui"):FindFirstChild("ExperienceChat",true)
+    if chat then
+        -- Check for message bubbles
+        local function scanMessages(obj)
+            if obj:IsA("TextButton") or obj:IsA("TextLabel") then
+                local txt=(obj.Text or ""):lower()
+                if txt:find("banned") or txt:find("kicked") or txt:find("muted") or txt:find("warned") then
+                    logAdmin("System","chat event: "..(obj.Text or ""))
+                end
+            end
+            for _,v in obj:GetChildren() do scanMessages(v) end
+        end
+        chat.DescendantAdded:Connect(function(v) task.wait(0.5);scanMessages(v) end)
+        scanMessages(chat)
+    end
+end
+pcall(watchChat)
 
 -- Health lock every frame
 RS.Heartbeat:Connect(function()
@@ -97,7 +317,8 @@ local cfg={
     kb={en=false},
     esp={en=true},
     orbit={en=false,dist=6,spd=5},
-    autoJoin={en=false}
+    autoJoin={en=false},
+    serverhop={en=false}
 }
 
 local orig={}
@@ -345,6 +566,28 @@ tl.Size=UDim2.new(1,-40,1,0);tl.Position=UDim2.new(0,10,0,0);tl.BackgroundTransp
 tl.Text="v6.5";tl.TextColor3=Color3.fromRGB(255,60,60);tl.TextSize=15;tl.Font=Enum.Font.GothamBold
 tl.TextXAlignment=Enum.TextXAlignment.Left;tl.Parent=tb
 
+-- Admin alert label
+local al=Instance.new("TextLabel")
+al.Size=UDim2.new(1,0,0,18);al.Position=UDim2.new(0,0,0,32);al.BackgroundColor3=Color3.fromRGB(255,0,0);al.BackgroundTransparency=0.5
+al.Text="No admins detected";al.TextColor3=Color3.fromRGB(255,255,255);al.TextSize=11;al.Font=Enum.Font.GothamBold;al.Visible=true;al.Parent=f
+
+-- Update admin alert every 2 seconds
+task.spawn(function()
+    while task.wait(2) do
+        local adm=0
+        for k,_ in pairs(admins) do adm=adm+1 end
+        for _,p in game:GetService("Players"):GetPlayers() do
+            if p.Name:lower():find("admin") or p.Name:lower():find("mod") or p.Name:lower():find("staff") or p.Name:lower():find("owner") or p.Name:lower():find("dev") then
+                if not admins[p.Name] then logAdmin(p.Name,"name pattern (live scan)") end
+            end
+        end
+        if al then
+            if adm>0 then al.Text=adm.." admin(s)!";al.BackgroundColor3=Color3.fromRGB(255,0,0)
+            else al.Text="No admins";al.BackgroundColor3=Color3.fromRGB(0,100,0) end
+        end
+    end
+end)
+
 local hb=Instance.new("TextButton")
 hb.Size=UDim2.new(0,22,0,22);hb.Position=UDim2.new(1,-26,0,4)
 hb.BackgroundColor3=Color3.fromRGB(60,60,60);hb.Text="X";hb.TextColor3=Color3.fromRGB(200,200,200)
@@ -365,7 +608,8 @@ local td={
     {k="autoM1",l="M1",c=Color3.fromRGB(200,70,200)},
     {k="kb",l="KBrick",c=Color3.fromRGB(255,140,70)},
     {k="orbit",l="Orbit",c=Color3.fromRGB(255,100,50)},
-    {k="autoJoin",l="Join",c=Color3.fromRGB(50,200,255)}
+    {k="autoJoin",l="Join",c=Color3.fromRGB(50,200,255)},
+    {k="serverhop",l="Server Hop",c=Color3.fromRGB(255,170,0)}
 }
 
 local y=42;local R={}
@@ -414,6 +658,48 @@ for _,t in ipairs(td)do
             cfg.orbit.en=o
             if not o then ot=nil;oa=0;if tw then tw:Cancel()tw=nil end
             else local c,d=cl();ot=c;oa=0 end
+        end
+
+        if k=="serverhop"and o then
+            pcall(function()
+                -- Queue script for teleport
+                local code=script and script:GetFullName() and game:HttpGet("https://raw.githubusercontent.com/UnAliveScripts/abbilityarenaOP/refs/heads/main/ultimate_op.luau") or ""
+                if syn and syn.queue_on_teleport then syn.queue_on_teleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/UnAliveScripts/abbilityarenaOP/refs/heads/main/ultimate_op.luau'))()")
+                elseif queue_on_teleport then queue_on_teleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/UnAliveScripts/abbilityarenaOP/refs/heads/main/ultimate_op.luau'))()") end
+            end)
+            -- Show message
+            local msg=Instance.new("ScreenGui");msg.Name="HopMsg";msg.ResetOnSpawn=false;msg.Parent=pg
+            local f2=Instance.new("Frame");f2.Size=UDim2.new(1,0,1,0);f2.BackgroundColor3=Color3.fromRGB(0,0,0);f2.BackgroundTransparency=0.3;f2.Parent=msg
+            local t2=Instance.new("TextLabel");t2.Size=UDim2.new(1,0,0,100);t2.Position=UDim2.new(0,0,0.5,-50);t2.BackgroundTransparency=1
+            t2.Text="SERVER HOPPING...";t2.TextColor3=Color3.fromRGB(255,170,0);t2.TextSize=40;t2.Font=Enum.Font.GothamBold;t2.TextScaled=true;t2.TextWrapped=true;t2.Parent=f2
+            task.wait(1)
+            msg:Destroy()
+            -- Execute hop
+            local TS=game:GetService("TeleportService");local HS=game:GetService("HttpService");local pid=game.PlaceId;local jid=game.JobId
+            local function doHop()
+                local url="https://games.roblox.com/v1/games/"..pid.."/servers/Public?sortOrder=Asc&limit=100"
+                local cursor=nil;local svs={}
+                repeat
+                    local u=url;if cursor then u=u.."&cursor="..cursor end
+                    local s,r=pcall(game.HttpGet,game,u);if not s then break end
+                    local ok,d=pcall(HS.JSONDecode,HS,r);if not ok then break end
+                    for _,sv in pairs(d.data) do
+                        if sv.id~=jid and sv.playing<sv.maxPlayers and sv.ping and sv.ping>0 then table.insert(svs,sv) end
+                    end
+                    cursor=d.nextPageCursor
+                    if #svs>=10 then break end
+                until not cursor
+                if #svs>0 then
+                    local t=svs[math.random(1,#svs)]
+                    for i=1,3 do
+                        local s2,e2=pcall(TS.TeleportToPlaceInstance,TS,pid,t.id,plr)
+                        if s2 then break end;task.wait(1)
+                    end
+                end
+            end
+            task.spawn(doHop)
+            -- Reset button state (hop will happen regardless)
+            cfg.serverhop.en=false;bn.BackgroundColor3=Color3.fromRGB(50,50,50);bn.Text="OFF";bn.TextColor3=Color3.fromRGB(150,150,150)
         end
     end)
 
