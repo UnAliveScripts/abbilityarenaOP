@@ -1,388 +1,464 @@
---[[ ABILITY ARENA - ULTIMATE OP v4 ]]
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local lp = Players.LocalPlayer
-local pg = lp.PlayerGui
+--[[ ABILITY ARENA ULTIMATE OP v6.5 ]]
+-- Health lock, IFrame bypass, Tween orbit, Lobby filter, ESP, hitbox, anti-KB, cooldown bypass, auto M1, skill spam, killbrick removal, auto join
 
-for _, v in pg:GetChildren() do
-    if v:IsA("ScreenGui") and (v.Name == "UltimateOP" or v.Name == "ESP_Overlay") then v:Destroy() end
+local plr=game:GetService("Players").LocalPlayer
+local RS=game:GetService("RunService")
+local TS=game:GetService("TweenService")
+local F=game:GetService("ReplicatedStorage"):FindFirstChild("Files")
+local pg=plr.PlayerGui
+
+for _,v in pg:GetChildren()do if v:IsA("ScreenGui")and v.Name=="UltimateOP"then v:Destroy()end end
+
+-- Health lock every frame
+RS.Heartbeat:Connect(function()
+    if plr.Character then
+        local h=plr.Character:FindFirstChildWhichIsA("Humanoid")
+        if h and h.Parent then h.BreakJointsOnDeath=false;h.Health=100 end
+    end
+end)
+
+-- Utility functions
+local gu=function()
+    local p=F and F.Shared and F.Shared.Utility and F.Shared.Utility:FindFirstChild("CharacterUtility")
+    if p then local o,m=pcall(require,p);if o then return m end end
 end
 
-if _G.orbitConns then for _, c in pairs(_G.orbitConns) do c:Disconnect() end; _G.orbitConns = nil end
+local gc=function()
+    local p=F and F.Client and F.Client.Controllers and F.Client.Controllers:FindFirstChild("CombatController")
+    if p then local o,m=pcall(require,p);if o then return m end end
+end
 
--- Adonis AC Bypass
-do
-    local AdonisTables = {}
-    local function bypassAC()
-        if not getreg or not getgc then return end
-        for _, thread in getreg() do
-            if typeof(thread) == "thread" then
-                local Source = debug.info(thread, 1, "s")
-                if Source and (Source:match(".Core.Anti") or Source:match(".Plugins.Anti_Cheat")) then
-                    pcall(coroutine.close, thread)
-                end
-            end
+local ga=function()
+    local p=F and F.Shared and F.Shared.Managers and F.Shared.Managers:FindFirstChild("AbilityManager")
+    if p then local o,m=pcall(require,p);if o then return m end end
+end
+
+-- IFrame invulnerability
+local IF=function(c)
+    if not c then return end
+    local u=gu()
+    if u and not u.HasStatusEffect(c,"IFrame")then u.AddStatusEffect(c,"IFrame",{},nil)end
+end
+
+-- Map bounds check (only target players inside Workspace.Map)
+local mapMin,mapMax=nil,nil
+local function calcMapBounds()
+    local map=workspace:FindFirstChild("Map")
+    if not map then return end
+    local mn,mx
+    for _,v in map:GetDescendants()do
+        if v:IsA("BasePart")then
+            local cf=v.CFrame;local sz=v.Size/2
+            local corners={cf*CFrame.new(-sz.X,-sz.Y,-sz.Z),cf*CFrame.new(sz.X,-sz.Y,-sz.Z),cf*CFrame.new(-sz.X,sz.Y,-sz.Z),cf*CFrame.new(sz.X,sz.Y,-sz.Z),cf*CFrame.new(-sz.X,-sz.Y,sz.Z),cf*CFrame.new(sz.X,-sz.Y,sz.Z),cf*CFrame.new(-sz.X,sz.Y,sz.Z),cf*CFrame.new(sz.X,sz.Y,sz.Z)}
+            for _,c in corners do local p=c.Position;if not mn then mn,mx=p,p else mn=Vector3.new(math.min(mn.X,p.X),math.min(mn.Y,p.Y),math.min(mn.Z,p.Z));mx=Vector3.new(math.max(mx.X,p.X),math.max(mx.Y,p.Y),math.max(mx.Z,p.Z))end end
         end
-        local Found
-        if filtergc then
-            Found = filtergc("table", { Keys = { "Detected", "RLocked" } }, false)
-        else
-            Found = {}
-            for _, t in getgc(true) do
-                if typeof(t) == "table" and typeof(rawget(t, "Detected")) == "function" and rawget(t, "RLocked") then
-                    table.insert(Found, t)
-                end
-            end
-        end
-        for _, t in Found do
-            if typeof(rawget(t, "Detected")) ~= "function" then continue end
-            for _, fn in t do
-                if typeof(fn) == "function" and not isfunctionhooked(fn) then
-                    hookfunction(fn, function() coroutine.yield(); return task.wait(9e9) end)
+    end
+    mapMin=mn;mapMax=mx
+end
+calcMapBounds()
+
+-- Check if position is inside map bounds (fast, no function call)
+local mm,MM=mapMin,mapMax
+local cl=function()
+    local b,bd=nil,math.huge
+    if not plr.Character then return nil end
+    local mp=plr.Character:FindFirstChild("HumanoidRootPart")
+    if not mp then return nil end
+    mp=mp.Position
+    for _,p in game.Players:GetPlayers()do
+        if p~=plr and p.Character then
+            local r=p.Character:FindFirstChild("HumanoidRootPart")
+            local h=p.Character:FindFirstChild("Humanoid")
+            if r and h and h.Health>0 then
+                local pos=r.Position
+                -- Fast map bounds check inline (no function call)
+                if mm and MM and pos.X>=mm.X and pos.X<=MM.X and pos.Y>=mm.Y and pos.Y<=MM.Y and pos.Z>=mm.Z and pos.Z<=MM.Z then
+                    local d=(mp-pos).Magnitude
+                    if d<bd then b,bd=p,d end
                 end
             end
         end
     end
-    local ok, err = pcall(bypassAC)
-    if ok then print("AC Bypass: Active") else warn("AC Bypass: " .. tostring(err)) end
+    return b,bd
 end
 
-local cfg = {
-    hitbox = { en = true, sz = 20, op = 0.35 },
-    noclip = { en = false }, speed = { en = false, v = 64 }, jump = { en = false, v = 80 },
-    loopsy = { en = false }, antiKB = { en = false }, abypass = { en = false },
-    spamSkill = { en = false, idx = 1 }, autoM1 = { en = false, range = 25 }, kb = { en = false },
-    esp = { en = true },
-    orbit = { en = false, dist = 6, spd = 5 },
-    autoJoin = { en = false },
+-- Config
+local cfg={
+    hitbox={en=true,sz=20,op=0.35},
+    noclip={en=false},
+    speed={en=false,v=64},
+    jump={en=false,v=80},
+    loopsy={en=false},
+    antiKB={en=false},
+    abypass={en=false},
+    spamSkill={en=false,idx=1},
+    autoM1={en=false,range=25},
+    kb={en=false},
+    esp={en=true},
+    orbit={en=false,dist=6,spd=5},
+    autoJoin={en=false}
 }
-local orig = {}; local espObjs = {}; local cu = nil; local combatMod = nil; local abilityMod = nil
-local orbitTarget = nil; local orbitAngle = 0
-local rs = game:GetService("ReplicatedStorage")
-local F = rs:FindFirstChild("Files")
-local function getDeployEvent()
-    local ok, ev = pcall(function()
-        return rs.Files.Shared.Components.Jolt.Utils.Remotes.Jolt_Reliable
-    end)
-    return ok and ev or nil
-end
 
-local function gcu()
-    if cu then return cu end
-    local p = F and F.Shared and F.Shared.Utility and F.Shared.Utility:FindFirstChild("CharacterUtility")
-    if p then local ok, m = pcall(require, p); if ok then cu = m; return m end end
-end
-
-local function gc()
-    if combatMod then return combatMod end
-    local p = F and F.Client and F.Client.Controllers and F.Client.Controllers:FindFirstChild("CombatController")
-    if p then local ok, m = pcall(require, p); if ok then combatMod = m; return m end end
-end
-
-local function ga()
-    if abilityMod then return abilityMod end
-    local p = F and F.Shared and F.Shared.Managers and F.Shared.Managers:FindFirstChild("AbilityManager")
-    if p then local ok, m = pcall(require, p); if ok then abilityMod = m; return m end end
-end
-
--- ESP
-local function createESP(p)
-    if p.Character then
-        local oldHl = p.Character:FindFirstChild("Highlight")
-        if oldHl then oldHl:Destroy() end
-        local oldBb = p.Character:FindFirstChild("BillboardGui")
-        if oldBb then oldBb:Destroy() end
-    end
-    if p == lp or espObjs[p] then return end
-    local function build(c)
-        if not c then return end
-        local hrp = c:WaitForChild("HumanoidRootPart", 5)
-        local hum = c:WaitForChild("Humanoid", 5)
-        if not hrp or not hum then return end
-        local hl = Instance.new("Highlight")
-        hl.Adornee = c; hl.FillColor = Color3.fromRGB(200,20,20); hl.FillTransparency = 0.6
-        hl.OutlineColor = Color3.fromRGB(255,30,30); hl.OutlineTransparency = 0.1
-        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = c
-        local bb = Instance.new("BillboardGui")
-        bb.Adornee = hrp; bb.Size = UDim2.new(0,80,0,50); bb.StudsOffset = Vector3.new(0,4.5,0)
-        bb.AlwaysOnTop = true; bb.Parent = c
-        local hpT = Instance.new("TextLabel")
-        hpT.Size = UDim2.new(1,0,1,0); hpT.BackgroundTransparency = 1; hpT.Font = Enum.Font.GothamBold
-        hpT.Text = "100"; hpT.TextColor3 = Color3.fromRGB(255,255,255); hpT.TextSize = 42
-        hpT.TextStrokeTransparency = 0.25; hpT.TextStrokeColor3 = Color3.fromRGB(0,0,0)
-        hpT.Parent = bb
-        espObjs[p] = {hl=hl, bb=bb, ht=hpT, hu=hum, hr=hrp}
-    end
-    if p.Character then build(p.Character) end
-    p.CharacterAdded:Connect(function(c) task.wait(0.5); espObjs[p] = nil; build(c) end)
-end
-
-local function updateESP()
-    for p, o in pairs(espObjs) do
-        if not p.Character or not p.Character.Parent then
-            if o.bb then o.bb.Enabled = false end; if o.hl then o.hl.Enabled = false end
-        elseif not o.hu or not o.hu.Parent or not o.hr or not o.hr.Parent then
-            if o.bb then o.bb:Destroy() end; if o.hl then o.hl:Destroy() end; espObjs[p] = nil
-        else
-            local en = cfg.esp.en
-            if o.bb then o.bb.Enabled = en end; if o.hl then o.hl.Enabled = en end
-            if en then
-                o.ht.Text = math.floor(o.hu.Health)
-                local r = o.hu.Health / math.max(o.hu.MaxHealth, 1)
-                if r > 0.6 then o.ht.TextColor3 = Color3.fromRGB(50,220,50)
-                elseif r > 0.3 then o.ht.TextColor3 = Color3.fromRGB(255,200,50)
-                else o.ht.TextColor3 = Color3.fromRGB(255,50,50) end
-            end
-        end
-    end
-end
-
-for _, p in Players:GetPlayers() do
-    if p.Character then
-        local oldHl = p.Character:FindFirstChild("Highlight"); if oldHl then oldHl:Destroy() end
-        local oldBb = p.Character:FindFirstChild("BillboardGui"); if oldBb then oldBb:Destroy() end
-    end
-    createESP(p)
-end
-Players.PlayerAdded:Connect(createESP)
-Players.PlayerRemoving:Connect(function(p) if espObjs[p] then espObjs[p] = nil end end)
+local orig={}
+local esp={}
+local ot=nil;local oa=0;local tw=nil
+local at=0;local st=0;local mt=0;local jt=0
 
 -- Cooldown bypass
-local function bc()
-    if not cfg.abypass.en or not lp.Character then return end
-    local m = gcu(); if not m then return end
-    local d = m.GetCharacterData(lp.Character)
-    if d then d.Timestamps = {}; if d.PersistentData and d.PersistentData.Timestamps then d.PersistentData.Timestamps = {} end end
+local bc=function()
+    if not cfg.abypass.en or not plr.Character then return end
+    local m=gu();if not m then return end
+    local d=m.GetCharacterData(plr.Character)
+    if d then d.Timestamps={};if d.PersistentData and d.PersistentData.Timestamps then d.PersistentData.Timestamps={}end end
 end
 
 -- Skill spam
-local st = 0
-local function ss(dt)
-    if not cfg.spamSkill.en or not lp.Character then return end
-    local am = ga(); if not am then return end
-    local ab = am.GetAbility(lp.Character); if not ab or not ab.Order then return end
-    st = st + dt; if st < 0.3 then return end; st = 0
-    local sk = am.GetSkills(lp.Character); if not sk then return end
-    local sn = ab.Order[cfg.spamSkill.idx]
-    if sn and sk[sn] then
-        local m = gcu(); if m then local d = m.GetCharacterData(lp.Character); if d then d.Timestamps = {} end end
-        local ok, r = pcall(am.StartSkill, am, lp.Character, sn)
-        if ok and r then cfg.spamSkill.idx = cfg.spamSkill.idx + 1; if cfg.spamSkill.idx > #ab.Order then cfg.spamSkill.idx = 1 end end
+local ss=function(dt)
+    if not cfg.spamSkill.en or not plr.Character then return end
+    local a=ga();if not a then return end
+    local ab=a.GetAbility(plr.Character);if not ab or not ab.Order then return end
+    st=st+dt;if st<0.3 then return end;st=0
+    local sk=a.GetSkills(plr.Character);if not sk then return end
+    local sn=ab.Order[cfg.spamSkill.idx]
+    if sn and sk[sn]then
+        local m=gu();if m then local d=m.GetCharacterData(plr.Character);if d then d.Timestamps={}end end
+        local ok,r=pcall(a.StartSkill,a,plr.Character,sn)
+        if ok and r then cfg.spamSkill.idx=cfg.spamSkill.idx+1;if cfg.spamSkill.idx>#ab.Order then cfg.spamSkill.idx=1 end end
     end
 end
 
--- Hitbox
-local function sh()
+-- Hitbox expander
+local sh=function()
     if not cfg.hitbox.en then return end
-    for _, p in Players:GetPlayers() do
-        if p ~= lp and p.Character then
-            local hb = p.Character:FindFirstChild("Hitbox")
-            if hb and hb:IsA("BasePart") then
-                if not orig[p] then orig[p] = hb.Size end
-                hb.Size = Vector3.new(cfg.hitbox.sz,cfg.hitbox.sz,cfg.hitbox.sz)
-                hb.Transparency = cfg.hitbox.op; hb.Color = Color3.fromRGB(255,50,50); hb.Material = Enum.Material.ForceField
+    for _,p in game.Players:GetPlayers()do
+        if p~=plr and p.Character then
+            local h=p.Character:FindFirstChild("Hitbox")
+            if h and h:IsA("BasePart")then
+                if not orig[p]then orig[p]=h.Size end
+                h.Size=Vector3.new(cfg.hitbox.sz,cfg.hitbox.sz,cfg.hitbox.sz)
+                h.Transparency=cfg.hitbox.op;h.Color=Color3.fromRGB(255,50,50);h.Material=Enum.Material.ForceField
             end
         end
     end
 end
 
--- Anti-KB
-local prevVel = Vector3.new()
-local function ak()
-    if not cfg.antiKB.en or not lp.Character then return end
-    local hrp = lp.Character:FindFirstChild("HumanoidRootPart"); local hum = lp.Character:FindFirstChild("Humanoid"); local m = gcu()
-    if not m or not hrp or not hum then return end
-    if m.GetState(lp.Character) == "Ragdoll" then
-        m.SetState(lp.Character, "Free"); hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false); hum:ChangeState(Enum.HumanoidStateType.Running)
+-- Anti knockback
+local ak=function()
+    if not cfg.antiKB.en or not plr.Character then return end
+    local r=plr.Character:FindFirstChild("HumanoidRootPart");local h=plr.Character:FindFirstChild("Humanoid");local m=gu()
+    if not m or not r or not h then return end
+    if m.GetState(plr.Character)=="Ragdoll"then
+        pcall(m.SetState,m,plr.Character,"Free")
+        pcall(function()h:SetStateEnabled(Enum.HumanoidStateType.Physics,false)h:ChangeState(Enum.HumanoidStateType.Running)end)
     end
-    local vel = hrp.AssemblyLinearVelocity
-    local currentWS = hum.WalkSpeed
-    local threshold = math.max(currentWS * 2, 50)
-    if vel.Magnitude > threshold then
-        hrp.AssemblyLinearVelocity = Vector3.new(vel.X * 0.3, 0, vel.Z * 0.3)
+    local v=r.AssemblyLinearVelocity;local t=math.max(h.WalkSpeed*2,50)
+    if v.Magnitude>t then r.AssemblyLinearVelocity=Vector3.new(v.X*0.3,0,v.Z*0.3)end
+end
+
+-- Speed / Jump
+local sj=function()
+    if not plr.Character then return end;local h=plr.Character:FindFirstChild("Humanoid")
+    if not h then return end
+    if cfg.speed.en then h.WalkSpeed=cfg.speed.v end
+    if cfg.jump.en then h.JumpHeight=cfg.jump.v end
+end
+local ls=function()
+    if cfg.loopsy.en and plr.Character then
+        local h=plr.Character:FindFirstChild("Humanoid")
+        if h then h.WalkSpeed=cfg.speed.v end
     end
 end
 
--- Speed+Jump
-local function sj()
-    if not lp.Character then return end
-    local hum = lp.Character:FindFirstChild("Humanoid"); if not hum then return end
-    if cfg.speed.en then hum.WalkSpeed = cfg.speed.v end; if cfg.jump.en then hum.JumpHeight = cfg.jump.v end
-end
-local function ls() if cfg.loopsy.en and lp.Character then local hum = lp.Character:FindFirstChild("Humanoid"); if hum then hum.WalkSpeed = cfg.speed.v end end end
-
--- Auto M1
-local amt = 0
-local function am1(dt)
-    if not cfg.autoM1.en or not lp.Character then return end
-    local hum = lp.Character:FindFirstChild("Humanoid"); local hrp = lp.Character:FindFirstChild("HumanoidRootPart")
-    if not hum or not hrp or hum.Health <= 0 then return end
-    amt = amt + dt; if amt < 0.12 then return end; amt = 0
-    local near, nd = nil, cfg.autoM1.range
-    for _, p in Players:GetPlayers() do
-        if p ~= lp and p.Character then
-            local t = p.Character:FindFirstChild("HumanoidRootPart"); local th = p.Character:FindFirstChild("Humanoid")
-            if t and th and th.Health > 0 then local d = (hrp.Position - t.Position).Magnitude; if d < nd then near = p; nd = d end end
-        end
-    end
-    if near and near.Character then
-        local thrp = near.Character:FindFirstChild("HumanoidRootPart")
-        if thrp then hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(thrp.Position.X, hrp.Position.Y, thrp.Position.Z)) end
-        local cm = gc(); if cm then pcall(function() cm.UseM1(cm) end) end
-    end
-end
-
--- Auto Orbit (orbit until 1 HP, then switch)
-local orbitAttackT = 0
-local function ao(dt)
-    if not cfg.orbit.en or not lp.Character then
-        if orbitTarget then orbitTarget = nil; orbitAngle = 0 end
-        return
-    end
-    local hrp = lp.Character:FindFirstChild("HumanoidRootPart")
-    local hum = lp.Character:FindFirstChild("Humanoid")
-    if not hrp or not hum or hum.Health <= 0 then orbitTarget = nil; return end
-    if orbitTarget and orbitTarget.Character then
-        local thrp = orbitTarget.Character:FindFirstChild("HumanoidRootPart")
-        local thum = orbitTarget.Character:FindFirstChild("Humanoid")
-        if not thrp or not thum or thum.Health <= 1 then orbitTarget = nil end
-    end
-    if not orbitTarget then
-        local best, bestHp = nil, math.huge
-        for _, p in Players:GetPlayers() do
-            if p ~= lp and p.Character then
-                local thrp = p.Character:FindFirstChild("HumanoidRootPart")
-                local thum = p.Character:FindFirstChild("Humanoid")
-                if thrp and thum and thum.Health > 0 and thum.Health < bestHp then
-                    best, bestHp = p, thum.Health
+-- Auto M1 (only targets players in map)
+local am1=function(dt)
+    if not cfg.autoM1.en or not plr.Character then return end
+    local h=plr.Character:FindFirstChild("Humanoid");local r=plr.Character:FindFirstChild("HumanoidRootPart")
+    if not h or not r or h.Health<=0 then return end
+    mt=mt+dt;if mt<0.12 then return end;mt=0
+    local n,nd=nil,cfg.autoM1.range
+    for _,p in game.Players:GetPlayers()do
+        if p~=plr and p.Character then
+            local t=p.Character:FindFirstChild("HumanoidRootPart");local th=p.Character:FindFirstChild("Humanoid")
+            if t and th and th.Health>0 and mm and MM then
+                local pos=t.Position
+                if pos.X>=mm.X and pos.X<=MM.X and pos.Y>=mm.Y and pos.Y<=MM.Y and pos.Z>=mm.Z and pos.Z<=MM.Z then
+                    local d=(r.Position-pos).Magnitude;if d<nd then n=p;nd=d end
                 end
             end
         end
-        orbitTarget = best; orbitAngle = 0
     end
-    if not orbitTarget or not orbitTarget.Character then return end
-    local thrp = orbitTarget.Character:FindFirstChild("HumanoidRootPart")
-    if not thrp then orbitTarget = nil; return end
-    orbitAngle = (orbitAngle + dt * cfg.orbit.spd * 60) % 360
-    hrp.CFrame = CFrame.new(thrp.Position) * CFrame.Angles(0, math.rad(orbitAngle), 0) * CFrame.new(cfg.orbit.dist, 0, 0)
-    hrp.CFrame = CFrame.new(hrp.Position, thrp.Position)
-    -- Attack while orbiting
-    orbitAttackT = orbitAttackT + dt
-    if orbitAttackT >= 0.15 then
-        orbitAttackT = 0
-        local cm = gc()
-        if cm then pcall(function() cm.UseM1(cm) end) end
+    if n and n.Character then
+        local t=n.Character:FindFirstChild("HumanoidRootPart")
+        if t then r.CFrame=CFrame.lookAt(r.Position,Vector3.new(t.Position.X,r.Position.Y,t.Position.Z))end
+        local c=gc();if c then pcall(function()c.UseM1(c)end)end
     end
 end
 
--- Auto Join Match
-local ajt = 0
-local function aj(dt)
+-- ADVANCED ORBIT: tween approach at 200 studs/s, orbit when close
+local ao=function(dt)
+    if not cfg.orbit.en then ot=nil;oa=0;if tw then tw:Cancel()tw=nil end;return end
+    if not plr.Character then ot=nil;return end
+    local r=plr.Character:FindFirstChild("HumanoidRootPart");local h=plr.Character:FindFirstChild("Humanoid")
+    if not r or not h or h.Health<=0 then ot=nil;return end
+
+    h.BreakJointsOnDeath=false;h.Health=100;IF(plr.Character)
+
+    -- Force Free state
+    local m=gu()
+    if m then
+        local s=m.GetState(plr.Character)
+        if s=="Ragdoll"or s=="Dying"then
+            pcall(m.SetState,m,plr.Character,"Free")
+            pcall(function()h:SetStateEnabled(Enum.HumanoidStateType.Physics,false)h:ChangeState(Enum.HumanoidStateType.Running)end)
+        end
+    end
+
+    -- Noclip + remove killbricks
+    for _,v in plr.Character:GetDescendants()do if v:IsA("BasePart")then v.CanCollide=false end end
+    local kf=workspace:FindFirstChild("KillBricks")
+    if kf then for _,v in kf:GetChildren()do if v:IsA("BasePart")then v.Anchored=false;v.CanCollide=false;v.Transparency=1 end end end
+
+    -- Validate current target (must be in map bounds)
+    if ot and ot.Character then
+        local tr=ot.Character:FindFirstChild("HumanoidRootPart");local th=ot.Character:FindFirstChild("Humanoid")
+        if not tr or not th or th.Health<=1 then ot=nil
+        elseif mm and MM then local p=tr.Position
+            if p.X<mm.X or p.X>MM.X or p.Y<mm.Y or p.Y>MM.Y or p.Z<mm.Z or p.Z>MM.Z then ot=nil end
+        end
+    end
+
+    -- Find closest target
+    if not ot then local c,d=cl();if c then ot=c;oa=0 end end
+    if not ot or not ot.Character then return end
+
+    local tr=ot.Character:FindFirstChild("HumanoidRootPart")
+    if not tr then ot=nil;return end
+
+    local d=(r.Position-tr.Position).Magnitude
+
+    if d>25 then
+        -- TWEEN approach at 200 studs/second
+        if tw then tw:Cancel()tw=nil end
+        tw=TS:Create(r,TweenInfo.new(d/200,Enum.EasingStyle.Linear,Enum.EasingDirection.Out),{
+            CFrame=CFrame.lookAt(tr.Position+Vector3.new(0,0,6),tr.Position)
+        })
+        tw:Play()
+    else
+        -- ORBIT
+        if tw then tw:Cancel()tw=nil end
+        oa=(oa+dt*5*60)%360
+        r.CFrame=r.CFrame:Lerp(CFrame.new(
+            CFrame.new(tr.Position)*CFrame.Angles(0,math.rad(oa),0)*CFrame.new(6,0,0).Position,
+            tr.Position
+        ),0.25)
+        r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+    end
+
+    -- Always face target and attack
+    r.CFrame=CFrame.lookAt(r.Position,Vector3.new(tr.Position.X,r.Position.Y,tr.Position.Z))
+    at=at+dt;if at>=0.12 then at=0;local c=gc();if c then pcall(function()c.UseM1(c)end)end end
+end
+
+-- Auto join match
+local aj=function(dt)
     if not cfg.autoJoin.en then return end
-    if lp.Character then return end
-    ajt = ajt + dt; if ajt < 1 then return end; ajt = 0
-    local ev = getDeployEvent()
-    if ev then
-        pcall(function()
-            ev:FireServer(buffer.fromstring("\x06Deploy\x81\x11\x00"), {})
-        end)
+    if plr.Character then return end
+    jt=jt+dt;if jt<1 then return end;jt=0
+    local ok,ev=pcall(function()return game:GetService("ReplicatedStorage").Files.Shared.Components.Jolt.Utils.Remotes.Jolt_Reliable end)
+    if ev then pcall(function()ev:FireServer(buffer.fromstring("\x06Deploy\x81\x11\x00"),{})end)end
+end
+
+-- ESP
+local me=function(p)
+    if p==plr or esp[p]then return end
+    local function bld(c)
+        if not c then return end
+        local r=c:WaitForChild("HumanoidRootPart",5);local h=c:WaitForChild("Humanoid",5)
+        if not r or not h then return end
+        local hl=Instance.new("Highlight")
+        hl.Adornee=c;hl.FillColor=Color3.fromRGB(200,20,20);hl.FillTransparency=0.6
+        hl.OutlineColor=Color3.fromRGB(255,30,30);hl.OutlineTransparency=0.1
+        hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop;hl.Parent=c
+        local bb=Instance.new("BillboardGui")
+        bb.Adornee=r;bb.Size=UDim2.new(0,80,0,50);bb.StudsOffset=Vector3.new(0,4.5,0);bb.AlwaysOnTop=true;bb.Parent=c
+        local t=Instance.new("TextLabel")
+        t.Size=UDim2.new(1,0,1,0);t.BackgroundTransparency=1;t.Font=Enum.Font.GothamBold
+        t.Text="100";t.TextColor3=Color3.fromRGB(255,255,255);t.TextSize=42
+        t.TextStrokeTransparency=0.25;t.TextStrokeColor3=Color3.fromRGB(0,0,0);t.Parent=bb
+        esp[p]={hl=hl,bb=bb,ht=t,hu=h,hr=r}
+    end
+    if p.Character then bld(p.Character)end
+    p.CharacterAdded:Connect(function(c)task.wait(0.5);esp[p]=nil;bld(c)end)
+end
+
+local ue=function()
+    for p,o in pairs(esp)do
+        if not p.Character or not p.Character.Parent then
+            if o.bb then o.bb.Enabled=false end;if o.hl then o.hl.Enabled=false end
+        elseif not o.hu or not o.hu.Parent or not o.hr or not o.hr.Parent then
+            if o.bb then o.bb:Destroy()end;if o.hl then o.hl:Destroy()end;esp[p]=nil
+        else
+            local en=cfg.esp.en
+            if o.bb then o.bb.Enabled=en end;if o.hl then o.hl.Enabled=en end
+            if en then
+                o.ht.Text=math.floor(o.hu.Health)
+                local r=o.hu.Health/math.max(o.hu.MaxHealth,1)
+                if r>0.6 then o.ht.TextColor3=Color3.fromRGB(50,220,50)
+                elseif r>0.3 then o.ht.TextColor3=Color3.fromRGB(255,200,50)
+                else o.ht.TextColor3=Color3.fromRGB(255,50,50)end
+            end
+        end
     end
 end
+
+for _,p in game.Players:GetPlayers()do me(p)end
+game.Players.PlayerAdded:Connect(me)
+game.Players.PlayerRemoving:Connect(function(p)if esp[p]then esp[p]=nil end end)
 
 -- Frame hooks
-RunService.Heartbeat:Connect(function() sh(); updateESP() end)
-RunService.Stepped:Connect(function() sh(); ls(); bc() end)
-RunService.RenderStepped:Connect(function(dt)
-    sh(); sj(); ls(); am1(dt); ak(); bc(); ss(dt); ao(dt); aj(dt)
-    if cfg.noclip.en and lp.Character then for _, v in lp.Character:GetDescendants() do if v:IsA("BasePart") then v.CanCollide = false end end end
-    if lp.Character then local hb = lp.Character:FindFirstChild("Hitbox"); if hb and hb:IsA("BasePart") and hb.Size.X > 5 then hb.Size = Vector3.new(4,6,2); hb.Transparency = 1; hb.Material = Enum.Material.Plastic end end
+RS.Heartbeat:Connect(function()pcall(sh)pcall(ue)end)
+RS.Stepped:Connect(function()pcall(sh)pcall(ls)pcall(bc)end)
+RS.RenderStepped:Connect(function(dt)
+    pcall(function()
+        sh()sj()ls()am1(dt)ak()bc()ss(dt)ao(dt)aj(dt)
+    end)
 end)
 
 -- GUI
-local sg = Instance.new("ScreenGui")
-sg.Name = "UltimateOP"; sg.ResetOnSpawn = false; sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; sg.Parent = pg
-local f = Instance.new("Frame")
-f.Size = UDim2.new(0,240,0,580); f.Position = UDim2.new(0,25,0,80)
-f.BackgroundColor3 = Color3.fromRGB(12,12,12); f.BackgroundTransparency = 0.15; f.BorderSizePixel = 0; f.Active = true; f.Parent = sg
-local fic = Instance.new("UICorner"); fic.CornerRadius = UDim.new(0,10); fic.Parent = f
-local tb = Instance.new("Frame")
-tb.Size = UDim2.new(1,0,0,30); tb.BackgroundColor3 = Color3.fromRGB(30,30,30); tb.BackgroundTransparency = 0.3
-tb.BorderSizePixel = 0; tb.Active = true; tb.Draggable = true; tb.Parent = f
-local tic = Instance.new("UICorner"); tic.CornerRadius = UDim.new(0,10); tic.Parent = tb
-local ttl = Instance.new("TextLabel")
-ttl.Size = UDim2.new(1,-40,1,0); ttl.Position = UDim2.new(0,10,0,0); ttl.BackgroundTransparency = 1
-ttl.Text = "ULTIMATE OP v4"; ttl.TextColor3 = Color3.fromRGB(255,60,60); ttl.TextSize = 15; ttl.Font = Enum.Font.GothamBold; ttl.TextXAlignment = Enum.TextXAlignment.Left; ttl.Parent = tb
-local hbB = Instance.new("TextButton")
-hbB.Size = UDim2.new(0,22,0,22); hbB.Position = UDim2.new(1,-26,0,4); hbB.BackgroundColor3 = Color3.fromRGB(60,60,60)
-hbB.Text = "X"; hbB.TextColor3 = Color3.fromRGB(200,200,200); hbB.TextSize = 12; hbB.Font = Enum.Font.GothamBold; hbB.BorderSizePixel = 0; hbB.Parent = tb
-local hic = Instance.new("UICorner"); hic.CornerRadius = UDim.new(0,4); hic.Parent = hbB
+local sg=Instance.new("ScreenGui");sg.Name="UltimateOP";sg.ResetOnSpawn=false;sg.Parent=pg
+local f=Instance.new("Frame")
+f.Size=UDim2.new(0,240,0,580);f.Position=UDim2.new(0,25,0,80)
+f.BackgroundColor3=Color3.fromRGB(12,12,12);f.BackgroundTransparency=0.15;f.BorderSizePixel=0;f.Active=true;f.Parent=sg
+local fc=Instance.new("UICorner");fc.CornerRadius=UDim.new(0,10);fc.Parent=f
 
-local td = {
-    {k="hitbox", l="Hitbox Expander [X]", c=Color3.fromRGB(255,70,70)},
-    {k="esp", l="ESP Wallhack", c=Color3.fromRGB(255,30,30)},
-    {k="noclip", l="NoClip [C]", c=Color3.fromRGB(70,130,255)},
-    {k="speed", l="Speed Boost", c=Color3.fromRGB(70,200,70)},
-    {k="loopsy", l="Loop Speed", c=Color3.fromRGB(50,230,100)},
-    {k="jump", l="Jump Boost", c=Color3.fromRGB(70,220,220)},
-    {k="antiKB", l="Anti Knockback", c=Color3.fromRGB(255,180,50)},
-    {k="abypass", l="Cooldown Bypass", c=Color3.fromRGB(255,100,255)},
-    {k="spamSkill", l="Spam Skills", c=Color3.fromRGB(200,50,200)},
-    {k="autoM1", l="Auto M1 Attack", c=Color3.fromRGB(200,70,200)},
-    {k="kb", l="Remove KillBricks", c=Color3.fromRGB(255,140,70)},
-    {k="orbit", l="Auto Orbit", c=Color3.fromRGB(255,100,50)},
-    {k="autoJoin", l="Auto Join Match", c=Color3.fromRGB(50,200,255)},
+local tb=Instance.new("Frame")
+tb.Size=UDim2.new(1,0,0,30);tb.BackgroundColor3=Color3.fromRGB(30,30,30);tb.BackgroundTransparency=0.3
+tb.BorderSizePixel=0;tb.Active=true;tb.Draggable=true;tb.Parent=f
+local t2c=Instance.new("UICorner");t2c.CornerRadius=UDim.new(0,10);t2c.Parent=tb
+
+local tl=Instance.new("TextLabel")
+tl.Size=UDim2.new(1,-40,1,0);tl.Position=UDim2.new(0,10,0,0);tl.BackgroundTransparency=1
+tl.Text="v6.5";tl.TextColor3=Color3.fromRGB(255,60,60);tl.TextSize=15;tl.Font=Enum.Font.GothamBold
+tl.TextXAlignment=Enum.TextXAlignment.Left;tl.Parent=tb
+
+local hb=Instance.new("TextButton")
+hb.Size=UDim2.new(0,22,0,22);hb.Position=UDim2.new(1,-26,0,4)
+hb.BackgroundColor3=Color3.fromRGB(60,60,60);hb.Text="X";hb.TextColor3=Color3.fromRGB(200,200,200)
+hb.TextSize=12;hb.Font=Enum.Font.GothamBold;hb.BorderSizePixel=0;hb.Parent=tb
+local hc=Instance.new("UICorner");hc.CornerRadius=UDim.new(0,4);hc.Parent=hb
+
+-- Toggle buttons
+local td={
+    {k="hitbox",l="Hitbox [X]",c=Color3.fromRGB(255,70,70)},
+    {k="esp",l="ESP",c=Color3.fromRGB(255,30,30)},
+    {k="noclip",l="NoClip [C]",c=Color3.fromRGB(70,130,255)},
+    {k="speed",l="Speed",c=Color3.fromRGB(70,200,70)},
+    {k="loopsy",l="LoopS",c=Color3.fromRGB(50,230,100)},
+    {k="jump",l="Jump",c=Color3.fromRGB(70,220,220)},
+    {k="antiKB",l="AntiKB",c=Color3.fromRGB(255,180,50)},
+    {k="abypass",l="CDwn",c=Color3.fromRGB(255,100,255)},
+    {k="spamSkill",l="Skill",c=Color3.fromRGB(200,50,200)},
+    {k="autoM1",l="M1",c=Color3.fromRGB(200,70,200)},
+    {k="kb",l="KBrick",c=Color3.fromRGB(255,140,70)},
+    {k="orbit",l="Orbit",c=Color3.fromRGB(255,100,50)},
+    {k="autoJoin",l="Join",c=Color3.fromRGB(50,200,255)}
 }
-local y = 42; local refs = {}
-for _, t in ipairs(td) do
-    local r = Instance.new("Frame")
-    r.Size = UDim2.new(1,-20,0,28); r.Position = UDim2.new(0,10,0,y); r.BackgroundTransparency = 1; r.Parent = f
-    local lb = Instance.new("TextLabel")
-    lb.Size = UDim2.new(0,145,1,0); lb.BackgroundTransparency = 1; lb.Text = t.l; lb.TextColor3 = Color3.fromRGB(200,200,200)
-    lb.TextSize = 12; lb.Font = Enum.Font.Gotham; lb.TextXAlignment = Enum.TextXAlignment.Left; lb.Parent = r
-    local on = cfg[t.k].en
-    local bn = Instance.new("TextButton")
-    bn.Size = UDim2.new(0,46,0,22); bn.Position = UDim2.new(1,-50,0.5,-11)
-    bn.BackgroundColor3 = on and t.c or Color3.fromRGB(50,50,50); bn.Text = on and "ON" or "OFF"
-    bn.TextColor3 = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(150,150,150); bn.TextSize = 11; bn.Font = Enum.Font.GothamBold; bn.BorderSizePixel = 0; bn.Parent = r
-    local bnc = Instance.new("UICorner"); bnc.CornerRadius = UDim.new(0,4); bnc.Parent = bn
+
+local y=42;local R={}
+for _,t in ipairs(td)do
+    local r=Instance.new("Frame")
+    r.Size=UDim2.new(1,-20,0,28);r.Position=UDim2.new(0,10,0,y);r.BackgroundTransparency=1;r.Parent=f
+
+    local lb=Instance.new("TextLabel")
+    lb.Size=UDim2.new(0,145,1,0);lb.BackgroundTransparency=1;lb.Text=t.l
+    lb.TextColor3=Color3.fromRGB(200,200,200);lb.TextSize=12;lb.Font=Enum.Font.Gotham
+    lb.TextXAlignment=Enum.TextXAlignment.Left;lb.Parent=r
+
+    local on=cfg[t.k].en
+    local bn=Instance.new("TextButton")
+    bn.Size=UDim2.new(0,46,0,22);bn.Position=UDim2.new(1,-50,0.5,-11)
+    bn.BackgroundColor3=on and t.c or Color3.fromRGB(50,50,50);bn.Text=on and"ON"or"OFF"
+    bn.TextColor3=on and Color3.fromRGB(255,255,255)or Color3.fromRGB(150,150,150)
+    bn.TextSize=11;bn.Font=Enum.Font.GothamBold;bn.BorderSizePixel=0;bn.Parent=r
+    local bc2=Instance.new("UICorner");bc2.CornerRadius=UDim.new(0,4);bc2.Parent=bn
+
     bn.MouseButton1Click:Connect(function()
-        local k = t.k; cfg[k].en = not cfg[k].en; local on2 = cfg[k].en
-        bn.BackgroundColor3 = on2 and t.c or Color3.fromRGB(50,50,50)
-        bn.Text = on2 and "ON" or "OFF"; bn.TextColor3 = on2 and Color3.fromRGB(255,255,255) or Color3.fromRGB(150,150,150)
-        if k == "noclip" and lp.Character then for _, v in lp.Character:GetDescendants() do if v:IsA("BasePart") then v.CanCollide = not on2 end end end
-        if k == "kb" then local ff = workspace:FindFirstChild("KillBricks"); if ff then for _, v in ff:GetChildren() do if v:IsA("BasePart") then v.Anchored = false; v.CanCollide = false; v.Transparency = 1 end end end end
-        if not on2 and k == "hitbox" then for p, s in next, orig do if p.Character then local h = p.Character:FindFirstChild("Hitbox"); if h then h.Size = s; h.Transparency = 1; h.Material = Enum.Material.Plastic; h.Color = Color3.fromRGB(163,162,165) end end end; orig = {} end
-        if not on2 and k == "orbit" then orbitTarget = nil; orbitAngle = 0 end
+        local k=t.k;cfg[k].en=not cfg[k].en;local o=cfg[k].en
+        bn.BackgroundColor3=o and t.c or Color3.fromRGB(50,50,50)
+        bn.Text=o and"ON"or"OFF";bn.TextColor3=o and Color3.fromRGB(255,255,255)or Color3.fromRGB(150,150,150)
+
+        if k=="noclip"and plr.Character then
+            for _,v in plr.Character:GetDescendants()do if v:IsA("BasePart")then v.CanCollide=not o end end
+        end
+
+        if k=="kb"then
+            local f2=workspace:FindFirstChild("KillBricks")
+            if f2 then for _,v in f2:GetChildren()do if v:IsA("BasePart")then v.Anchored=false;v.CanCollide=false;v.Transparency=1 end end end
+        end
+
+        if not o and k=="hitbox"then
+            for p,s in next,orig do
+                if p.Character then
+                    local h=p.Character:FindFirstChild("Hitbox")
+                    if h then h.Size=s;h.Transparency=1;h.Material=Enum.Material.Plastic;h.Color=Color3.fromRGB(163,162,165)end
+                end
+            end
+            orig={}
+        end
+
+        if k=="orbit"then
+            cfg.orbit.en=o
+            if not o then ot=nil;oa=0;if tw then tw:Cancel()tw=nil end
+            else local c,d=cl();ot=c;oa=0 end
+        end
     end)
-    y = y + 32; refs[t.k] = bn
+
+    y=y+32;R[t.k]=bn
 end
 
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Enum.KeyCode.X then
-        local k = "hitbox"; cfg[k].en = not cfg[k].en; local o = cfg[k].en; local b = refs[k]
-        b.BackgroundColor3 = o and Color3.fromRGB(255,70,70) or Color3.fromRGB(50,50,50)
-        b.Text = o and "ON" or "OFF"; b.TextColor3 = o and Color3.fromRGB(255,255,255) or Color3.fromRGB(150,150,150)
-        if not o then for p, s in next, orig do if p.Character then local h = p.Character:FindFirstChild("Hitbox"); if h then h.Size = s; h.Transparency = 1; h.Material = Enum.Material.Plastic; h.Color = Color3.fromRGB(163,162,165) end end end; orig = {} end
+-- Hotkeys
+game:GetService("UserInputService").InputBegan:Connect(function(i,g)
+    if g then return end
+    if i.KeyCode==Enum.KeyCode.X then
+        local k="hitbox";cfg[k].en=not cfg[k].en;local o=cfg[k].en;local b=R[k]
+        b.BackgroundColor3=o and Color3.fromRGB(255,70,70)or Color3.fromRGB(50,50,50)
+        b.Text=o and"ON"or"OFF";b.TextColor3=o and Color3.fromRGB(255,255,255)or Color3.fromRGB(150,150,150)
+        if not o then for p,s in next,orig do if p.Character then local h=p.Character:FindFirstChild("Hitbox");if h then h.Size=s;h.Transparency=1;h.Material=Enum.Material.Plastic;h.Color=Color3.fromRGB(163,162,165)end end end;orig={}end
     end
-    if input.KeyCode == Enum.KeyCode.C then
-        local k = "noclip"; cfg[k].en = not cfg[k].en; local o = cfg[k].en; local b = refs[k]
-        b.BackgroundColor3 = o and Color3.fromRGB(70,130,255) or Color3.fromRGB(50,50,50)
-        b.Text = o and "ON" or "OFF"; b.TextColor3 = o and Color3.fromRGB(255,255,255) or Color3.fromRGB(150,150,150)
-        if lp.Character then for _, v in lp.Character:GetDescendants() do if v:IsA("BasePart") then v.CanCollide = not o end end end
+    if i.KeyCode==Enum.KeyCode.C then
+        local k="noclip";cfg[k].en=not cfg[k].en;local o=cfg[k].en;local b=R[k]
+        b.BackgroundColor3=o and Color3.fromRGB(70,130,255)or Color3.fromRGB(50,50,50)
+        b.Text=o and"ON"or"OFF";b.TextColor3=o and Color3.fromRGB(255,255,255)or Color3.fromRGB(150,150,150)
+        if plr.Character then for _,v in plr.Character:GetDescendants()do if v:IsA("BasePart")then v.CanCollide=not o end end end
     end
 end)
 
-local hidden = false
-hbB.MouseButton1Click:Connect(function() hidden = not hidden; f.Visible = not hidden; hbB.Text = hidden and "+" or "X" end)
+-- Minimize button
+local hd=false
+hb.MouseButton1Click:Connect(function()hd=not hd;f.Visible=not hd;hb.Text=hd and"+"or"X"end)
 
-for _, p in Players:GetPlayers() do if p.Character and p ~= lp then local h = p.Character:FindFirstChild("Hitbox"); if h then orig[p] = h.Size end end end
-lp.CharacterAdded:Connect(function() task.wait(0.5); if cfg.noclip.en and lp.Character then for _, v in lp.Character:GetDescendants() do if v:IsA("BasePart") then v.CanCollide = false end end end end)
-lp.CharacterRemoving:Connect(function()
+-- Save original hitbox sizes
+for _,p in game.Players:GetPlayers()do
+    if p.Character and p~=plr then
+        local h=p.Character:FindFirstChild("Hitbox")
+        if h then orig[p]=h.Size end
+    end
+end
+
+-- Character respawn events
+plr.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    if cfg.noclip.en and plr.Character then
+        for _,v in plr.Character:GetDescendants()do if v:IsA("BasePart")then v.CanCollide=false end end
+    end
+end)
+
+plr.CharacterRemoving:Connect(function()
     if cfg.autoJoin.en then
         task.wait(0.5)
-        local ev = getDeployEvent()
-        if ev then pcall(function() ev:FireServer(buffer.fromstring("\x06Deploy\x81\x11\x00"), {}) end) end
+        local ok,ev=pcall(function()return game:GetService("ReplicatedStorage").Files.Shared.Components.Jolt.Utils.Remotes.Jolt_Reliable end)
+        if ev then pcall(function()ev:FireServer(buffer.fromstring("\x06Deploy\x81\x11\x00"),{})end)end
     end
 end)
+
+print("v6.5 OK")
